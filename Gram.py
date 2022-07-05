@@ -164,4 +164,5 @@ if __name__ == "__main__":
         if  ii % show_every == 0:
             plt.imshow(im_convert(target))
             plt.savefig(result_dic + content_name + '-' + artist_name + '-' + str(ii) + '.jpg')
+            print(1)
 
