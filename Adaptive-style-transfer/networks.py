@@ -16,10 +16,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from torch import nn
+from pyexpat import features
+from torch import conv2d, nn
 import torch
 import torch.nn.functional as F
-
+import torchvision.models as models
 class encoder(nn.Module):
     def __init__(self, options):
         super(encoder, self).__init__()
@@ -62,10 +63,12 @@ class upscale_block(nn.Module):
         x = F.interpolate(x, scale_factor=self.s, mode='nearest')
         return F.relu(F.instance_norm(self.c1(x)), inplace=True)
 
+
+
 class decoder(nn.Module):
     def __init__(self, options):
         super(decoder, self).__init__()
-        self.r1 = residule_block(options.gf_dim*8)
+        self.r1 = residule_block(options.gf_dim*8)  # 256
         self.r2 = residule_block(options.gf_dim*8)
         self.r3 = residule_block(options.gf_dim*8)
         self.r4 = residule_block(options.gf_dim*8)
@@ -77,19 +80,59 @@ class decoder(nn.Module):
         self.u1 = upscale_block(options.gf_dim*8, options.gf_dim*8, 3,2)
         self.u2 = upscale_block(options.gf_dim*8, options.gf_dim*4, 3,2)
         self.u3 = upscale_block(options.gf_dim*4, options.gf_dim*2, 3,2)
-        self.u4 = upscale_block(options.gf_dim*2, options.gf_dim, 3,2)
-        self.c1 = nn.Conv2d(options.gf_dim, 3, 7, stride=1)
+        self.u4 = upscale_block(options.gf_dim*2, 3, 3, 2) # TODO: options.gf_dim->3
+        # self.c1 = nn.Conv2d(options.gf_dim, 3, 7, stride=1)
         self.sig = nn.Sigmoid()
-    def forward(self, x):
+        self.gf_dim = options.gf_dim
+        self.scbc = []
+        k = [2, 4, 8, 8] # out channel number
+        self.scbc0_1 = nn.Conv2d(in_channels=128, out_channels=64, kernel_size=4, stride=2, padding=2)
+        self.scbc0_2 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=4, stride=2, padding=2)
+        self.scbc1_1 = nn.Conv2d(in_channels=256, out_channels=128, kernel_size=4, stride=2, padding=2)
+        self.scbc1_2 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=4, stride=2, padding=2)
+        self.scbc2_1 = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=4, stride=2, padding=2)
+        self.scbc2_2 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=4, stride=2, padding=2)
+        self.scbc3_1 = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=4, stride=2, padding=2)
+        self.scbc3_2 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=4, stride=2, padding=2)
+        self.scb = [[self.scbc0_1, self.scbc0_2], [self.scbc1_1, self.scbc1_2], [ self.scbc2_1, self.scbc2_2], [self.scbc3_1, self.scbc3_2]]
+        
+    def SCB(self, artwork):
+        vgg19 = models.vgg19(pretrained=False).cuda()
+        scb_layer = [6, 11, 20, 28]
+        style_layers = []
+        vgg_feature = artwork
+        for i in range(37):
+            vgg_feature = vgg19.features[i](vgg_feature)
+            if i in scb_layer:
+                style_layers.append(vgg_feature)
+        sf = []
+        k = [2, 4, 8, 8] # out channel number
+        for i in range(len(style_layers)):
+            x = self.scb[i][0](style_layers[i])
+            x = F.relu(x)
+            x = self.scb[i][1](x)
+            x = F.relu(x)
+            sf.append(nn.AdaptiveAvgPool2d(1)(x))
+        return sf
+    
+
+
+
+
+    def forward(self, x, artwork):
+        # first applying SCB block
         self.eval()
+        SCB_val = self.SCB(artwork)
+
         x = self.r3(self.r2(self.r1(x)))
         x = self.r6(self.r5(self.r4(x)))
         x = self.r9(self.r8(self.r7(x)))
         x = self.u4(self.u3(self.u2(self.u1(x))))
-        x = F.pad(x, (3,3,3,3), 'reflect')
-        x = self.sig(self.c1(x))*2. - 1.
+        # x = F.pad(x, (3,3,3,3), 'reflect')
+        # x = self.sig(self.c1(x))*2. - 1.
+        x = self.sig(x)*2. - 1.
         self.train()
-        return x
+        return x  #
 
 class transformer_block(nn.Module):
     def __init__(self, options):
@@ -133,3 +176,13 @@ class discriminator(nn.Module):
                 "pred_4": p4,
                 "pred_6": p6,
                 "pred_7": p7}
+
+
+if __name__ == "__main__":
+    device = 'cuda:0'
+    vgg19 = models.vgg19(pretrained=False).cuda()
+    for name, layer in vgg19._modules.items():
+        print(name, layer)
+
+
+    

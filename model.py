@@ -1,4 +1,5 @@
 from urllib.parse import urlparse
+import torch
 from torch.hub import _download_url_to_file
 import re
 import os
